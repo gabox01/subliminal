@@ -440,8 +440,8 @@ def scan_archive(path):
 
     return video
 
+def collect_videos(path, age=None, archives=True):
 
-def scan_videos(path, age=None, archives=True):
     """Scan `path` for videos and their subtitles.
 
     See :func:`refine` to find additional information for the video.
@@ -462,7 +462,7 @@ def scan_videos(path, age=None, archives=True):
         raise ValueError('Path is not a directory')
 
     # walk the path
-    videos = []
+    filePaths = []
     for dirpath, dirnames, filenames in os.walk(path):
         logger.debug('Walking directory %r', dirpath)
 
@@ -497,24 +497,30 @@ def scan_videos(path, age=None, archives=True):
                 continue
 
             # scan
-            if filename.endswith(VIDEO_EXTENSIONS):  # video
-                try:
-                    video = scan_video(filepath)
-                except ValueError:  # pragma: no cover
-                    logger.exception('Error scanning video')
-                    continue
-            elif archives and filename.endswith(ARCHIVE_EXTENSIONS):  # archive
-                try:
-                    video = scan_archive(filepath)
-                except (NotRarFile, RarCannotExec, ValueError):  # pragma: no cover
-                    logger.exception('Error scanning archive')
-                    continue
-            else:  # pragma: no cover
-                raise ValueError('Unsupported file %r' % filename)
+            if filename.endswith(VIDEO_EXTENSIONS) or filename.endswith(ARCHIVE_EXTENSIONS):
+                filePaths.append(filepath)
 
-            videos.append(video)
+    return filePaths
 
-    return videos
+def scan_filepath(filepath, archives):
+
+    path, filename = os.path.split(filepath)
+
+    # scan
+    if filename.endswith(VIDEO_EXTENSIONS):  # video
+        try:
+            video = scan_video(filepath)
+        except ValueError:  # pragma: no cover
+            logger.exception('Error scanning video')
+    elif archives and filename.endswith(ARCHIVE_EXTENSIONS):  # archive
+        try:
+            video = scan_archive(filepath)
+        except (NotRarFile, RarCannotExec, ValueError):  # pragma: no cover
+            logger.exception('Error scanning archive')
+    else:  # pragma: no cover
+        raise ValueError('Unsupported file %r' % filename)
+
+    return video
 
 
 def refine(video, episode_refiners=None, movie_refiners=None, **kwargs):
@@ -601,13 +607,13 @@ def download_subtitles(subtitles, pool_class=ProviderPool, **kwargs):
             pool.download_subtitle(subtitle)
 
 
-def download_best_subtitles(videos, languages, min_score=0, hearing_impaired=False, only_one=False, compute_score=None,
+def download_best_subtitles(video, languages, min_score=0, hearing_impaired=False, only_one=False, compute_score=None,
                             pool_class=ProviderPool, **kwargs):
     """List and download the best matching subtitles.
 
     The `videos` must pass the `languages` and `undefined` (`only_one`) checks of :func:`check_video`.
 
-    :param videos: videos to download subtitles for.
+    :param video: videos to download subtitles for.
     :type videos: set of :class:`~subliminal.video.Video`
     :param languages: languages to download.
     :type languages: set of :class:`~babelfish.language.Language`
@@ -625,28 +631,20 @@ def download_best_subtitles(videos, languages, min_score=0, hearing_impaired=Fal
     """
     downloaded_subtitles = defaultdict(list)
 
-    # check videos
-    checked_videos = []
-    for video in videos:
-        if not check_video(video, languages=languages, undefined=only_one):
-            logger.info('Skipping video %r', video)
-            continue
-        checked_videos.append(video)
 
-    # return immediately if no video passed the checks
-    if not checked_videos:
+    if not check_video(video, languages=languages, undefined=only_one):
+        logger.info('Skipping video %r', video)
         return downloaded_subtitles
 
     # download best subtitles
     with pool_class(**kwargs) as pool:
-        for video in checked_videos:
-            logger.info('Downloading best subtitles for %r', video)
-            subtitles = pool.download_best_subtitles(pool.list_subtitles(video, languages - video.subtitle_languages),
-                                                     video, languages, min_score=min_score,
-                                                     hearing_impaired=hearing_impaired, only_one=only_one,
-                                                     compute_score=compute_score)
-            logger.info('Downloaded %d subtitle(s)', len(subtitles))
-            downloaded_subtitles[video].extend(subtitles)
+        logger.info('Downloading best subtitles for %r', video)
+        subtitles = pool.download_best_subtitles(pool.list_subtitles(video, languages - video.subtitle_languages),
+                                                 video, languages, min_score=min_score,
+                                                 hearing_impaired=hearing_impaired, only_one=only_one,
+                                                 compute_score=compute_score)
+        logger.info('Downloaded %d subtitle(s)', len(subtitles))
+        downloaded_subtitles[video].extend(subtitles)
 
     return downloaded_subtitles
 
@@ -703,3 +701,15 @@ def save_subtitles(video, subtitles, single=False, directory=None, encoding=None
             break
 
     return saved_subtitles
+
+def execute(path, languages):
+
+    collected = collect_videos(path)
+    print("Found ", len(collected), " videos")
+    for filepath in collected:
+        print("Scanning " + filepath)
+        video = scan_filepath(filepath, 1)
+        print("Downloading subs for " + filepath)
+        subtitles = download_best_subtitles(video, languages)
+        print("Saving subs for " + filepath)
+        save_subtitles(video, subtitles[video])
