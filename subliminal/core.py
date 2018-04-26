@@ -702,10 +702,18 @@ def save_subtitles(video, subtitles, single=False, directory=None, encoding=None
 
     return saved_subtitles
 
+import progressbar
+from time import sleep
+
 def execute(path, languages):
 
     collected = collect_videos(path)
     print("Found ", len(collected), " videos")
+
+    bar = progressbar.ProgressBar(maxval=len(collected), \
+                                  widgets=[progressbar.Bar('=', '[', ']'), ' ', progressbar.Percentage()])
+    bar.start()
+    i = 0
     for filepath in collected:
         print("Scanning " + filepath)
         video = scan_filepath(filepath, 1)
@@ -713,3 +721,8 @@ def execute(path, languages):
         subtitles = download_best_subtitles(video, languages)
         print("Saving subs for " + filepath)
         save_subtitles(video, subtitles[video])
+
+        bar.update(++i)
+        sleep(0.1)
+
+    bar.finish()
